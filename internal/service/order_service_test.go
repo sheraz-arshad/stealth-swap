@@ -25,7 +25,7 @@ func TestCreateOrder(t *testing.T) {
 			CreatedAt: time.Now(),
 			Market:    market,
 		}
-		orderService.CreateOrder(order)
+		orderService.CreateOrder(order, marketTicker)
 	}
 	for i := 0; i < 1; i++ {
 		order := Order{
@@ -36,7 +36,7 @@ func TestCreateOrder(t *testing.T) {
 			CreatedAt: time.Now(),
 			Market:    market,
 		}
-		orderService.CreateOrder(order)
+		orderService.CreateOrder(order, marketTicker)
 	}
 
 	orderService.PrintOrders(marketTicker)
