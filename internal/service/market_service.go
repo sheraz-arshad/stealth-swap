@@ -18,7 +18,6 @@ type Market struct {
 	MarketTicker             string
 	BuyLiquidityInBaseToken  *big.Int
 	SellLiquidityInBaseToken *big.Int
-	LastPrice                *big.Int
 }
 
 func NewMarketService() *MarketService {
@@ -44,7 +43,6 @@ func (service *MarketService) CreateMarket(
 		MarketTicker:             marketTicker,
 		BuyLiquidityInBaseToken:  new(big.Int),
 		SellLiquidityInBaseToken: new(big.Int),
-		LastPrice:                new(big.Int),
 	}
 
 	return service.Markets[marketTicker]
@@ -61,15 +59,6 @@ func (service *MarketService) UpdateLiquidity(
 	service.Markets[marketTicker] = market
 }
 
-func (service *MarketService) UpdateLastPrice(
-	marketTicker string,
-	lastPrice *big.Int,
-) {
-	market := service.Markets[marketTicker]
-	market.LastPrice = lastPrice
-	service.Markets[marketTicker] = market
-}
-
 func (service *MarketService) GetMarket(marketTicker string) Market {
 	return service.Markets[marketTicker]
 }
@@ -80,11 +69,8 @@ func (service *MarketService) PrintMarkets(marketTicker string) {
 			baseMultiplier := new(
 				big.Int,
 			).Exp(big.NewInt(10), big.NewInt(int64(market.BaseTokenDecimals)), nil)
-			quoteMultiplier := new(
-				big.Int,
-			).Exp(big.NewInt(10), big.NewInt(int64(market.QuoteTokenDecimals)), nil)
 			fmt.Printf(
-				"Market: %s\nBaseToken: %s\nQuoteToken: %s\nBaseTokenDecimals: %d\nQuoteTokenDecimals: %d\nBuyLiquidityInBaseToken: %d\nSellLiquidityInBaseToken: %d\nLastPrice: %d\n",
+				"Market: %s\nBaseToken: %s\nQuoteToken: %s\nBaseTokenDecimals: %d\nQuoteTokenDecimals: %d\nBuyLiquidityInBaseToken: %d\nSellLiquidityInBaseToken: %d\n",
 				market.MarketTicker,
 				market.BaseToken,
 				market.QuoteToken,
@@ -95,7 +81,6 @@ func (service *MarketService) PrintMarkets(marketTicker string) {
 					market.SellLiquidityInBaseToken,
 					baseMultiplier,
 				),
-				new(big.Int).Div(market.LastPrice, quoteMultiplier),
 			)
 			return
 		}

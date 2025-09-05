@@ -16,23 +16,23 @@ func TestCreateOrder(t *testing.T) {
 	// setup order
 	orderService := NewOrderService(marketService)
 	// create orders
-	for i := 0; i < 1; i++ {
+	for i := 0; i < 2; i++ {
 		order := Order{
 			ID:        orderService.GetNextOrderID(),
 			OrderType: BuyOrder,
 			Size:      big.NewInt(1e8),
-			Price:     big.NewInt(112_000e6 + int64(i)),
+			Price:     big.NewInt(112_000e6 - int64(i * 2000e6)),
 			CreatedAt: time.Now(),
 			Market:    market,
 		}
 		orderService.CreateOrder(order, marketTicker)
 	}
-	for i := 0; i < 1; i++ {
+	for i := 0; i < 2; i++ {
 		order := Order{
 			ID:        orderService.GetNextOrderID(),
 			OrderType: SellOrder,
 			Size:      big.NewInt(1e8),
-			Price:     big.NewInt(112_000e6 + int64(i)),
+			Price:     big.NewInt(112_000e6 + int64(i * 2000e6)),
 			CreatedAt: time.Now(),
 			Market:    market,
 		}

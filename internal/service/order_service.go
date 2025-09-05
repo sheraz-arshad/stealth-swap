@@ -6,8 +6,15 @@ import (
 	"time"
 )
 
+type OrderBook struct {
+	Orders         []Order
+	LastPrice      *big.Int
+	FirstSellIndex int
+	FirstBuyIndex  int
+}
+
 type OrderService struct {
-	Orders        map[string][]Order
+	OrderBooks    map[string]OrderBook
 	marketService *MarketService
 	orderID       int64
 }
@@ -30,7 +37,7 @@ type Order struct {
 
 func NewOrderService(marketService *MarketService) *OrderService {
 	return &OrderService{
-		Orders:        make(map[string][]Order),
+		OrderBooks:    make(map[string]OrderBook),
 		marketService: marketService,
 		orderID:       0,
 	}
@@ -39,22 +46,22 @@ func NewOrderService(marketService *MarketService) *OrderService {
 func (service *OrderService) CreateOrder(order Order, marketTicker string) {
 	// insert new order in the list based on the price where the order before it should have higher price
 	insertIdx := 0
-	for i, existingOrder := range service.Orders[marketTicker] {
+	for i, existingOrder := range service.OrderBooks[marketTicker].Orders {
 		if existingOrder.Price.Cmp(order.Price) > 0 {
 			insertIdx = i + 1
 		} else {
 			break
 		}
 	}
-	service.Orders[marketTicker] = append(service.Orders[marketTicker], Order{}) // extend slice
-	copy(service.Orders[marketTicker][insertIdx+1:], service.Orders[marketTicker][insertIdx:])
-	service.Orders[marketTicker][insertIdx] = order
+	orderBook := service.OrderBooks[marketTicker]
+	orderBook.Orders = append(orderBook.Orders, Order{}) // extend slice
+	copy(orderBook.Orders[insertIdx+1:], orderBook.Orders[insertIdx:])
+	orderBook.Orders[insertIdx] = order
+	service.OrderBooks[marketTicker] = orderBook
 
-	if len(service.Orders) == 1 {
-		service.marketService.UpdateLastPrice(
-			marketTicker,
-			order.Price,
-		)
+	if len(orderBook.Orders) == 1 {
+		orderBook.LastPrice = order.Price
+		service.OrderBooks[marketTicker] = orderBook
 	}
 
 	if order.OrderType == BuyOrder {
@@ -107,8 +114,17 @@ func (service *OrderService) CreateOrder(order Order, marketTicker string) {
 	}
 }
 
+func (service *OrderService) FillOrder(order Order, marketTicker string) {
+	// lastPrice := service.marketService.GetMarket(marketTicker).LastPrice
+	// if order.OrderType == BuyOrder {
+
+	// } else {
+
+	// }
+}
+
 func (service *OrderService) GetOrdersByMarketTicker(marketTicker string) []Order {
-	return append([]Order{}, service.Orders[marketTicker]...)
+	return append([]Order{}, service.OrderBooks[marketTicker].Orders...)
 }
 
 func (service *OrderService) GetNextOrderID() int64 {
@@ -119,13 +135,13 @@ func (service *OrderService) GetNextOrderID() int64 {
 // PrintOrders prints all orders to console in a formatted way
 func (service *OrderService) PrintOrders(marketTicker string) {
 	fmt.Println("=== ORDERS ===")
-	if len(service.Orders[marketTicker]) == 0 {
+	orderBook := service.OrderBooks[marketTicker]
+	if len(orderBook.Orders) == 0 {
 		fmt.Println("No orders found")
 		return
 	}
 
 	market := service.marketService.GetMarket(marketTicker)
-	lastPrice := market.LastPrice
 	quoteMultiplier := new(
 		big.Int,
 	).Exp(big.NewInt(10), big.NewInt(int64(market.QuoteTokenDecimals)), nil)
@@ -133,9 +149,9 @@ func (service *OrderService) PrintOrders(marketTicker string) {
 		big.Int,
 	).Exp(big.NewInt(10), big.NewInt(int64(market.BaseTokenDecimals)), nil)
 
-	fmt.Println("Last Price:", new(big.Int).Div(lastPrice, quoteMultiplier))
+	fmt.Println("Last Price:", new(big.Int).Div(orderBook.LastPrice, quoteMultiplier))
 
-	for _, order := range service.Orders[marketTicker] {
+	for _, order := range orderBook.Orders {
 		fmt.Printf("Order ID:%d | Type: %s | Size: %d | Price: %d | Market: %s | Time: %s\n",
 			order.ID,
 			order.OrderType,
