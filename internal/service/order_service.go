@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"math/big"
+	"sort"
 	"time"
 )
 
@@ -56,76 +57,40 @@ func NewOrderService(marketService *MarketService) *OrderService {
 
 func (service *OrderService) CreateOrder(order Order, marketTicker string) {
 	// insert new order in the list based on the price where the order before it should have higher price
-	insertIdx := 0
 	orderBook := service.OrderBooks[marketTicker]
+	insertIdx := len(orderBook.Orders)
 
 	for i, existingOrder := range orderBook.Orders {
-		if existingOrder.Status == Closed || existingOrder.Status == Filled {
-			continue
-		}
-		if order.Price.Cmp(existingOrder.Price) > 0 {
-			insertIdx = i + 1
+		if order.Price.Cmp(existingOrder.Price) < 0 {
+			insertIdx = i
 			break
 		}
 	}
 	orderBook.Orders = append(orderBook.Orders, Order{}) // extend slice
 	copy(orderBook.Orders[insertIdx+1:], orderBook.Orders[insertIdx:])
 	orderBook.Orders[insertIdx] = order
-	service.OrderBooks[marketTicker] = orderBook
 
 	if len(orderBook.Orders) == 1 {
 		orderBook.LastPrice = order.Price
-		service.OrderBooks[marketTicker] = orderBook
+	} else {
+		if order.OrderType == BuyOrder {
+			orderBook.BuyIndex = orderBook.BuyIndex + 1
+			if orderBook.SellIndex > 0 {
+				orderBook.SellIndex = orderBook.SellIndex + 1
+			}
+		} else if order.OrderType == SellOrder && (insertIdx < orderBook.SellIndex || orderBook.SellIndex <= 0) {
+			orderBook.SellIndex = insertIdx
+		}
 	}
-
-	if order.OrderType == BuyOrder && insertIdx > orderBook.BuyIndex {
-		orderBook.BuyIndex = insertIdx
-	} else if order.OrderType == SellOrder && insertIdx < orderBook.SellIndex {
-		orderBook.SellIndex = insertIdx
-	}
+	service.OrderBooks[marketTicker] = orderBook
 
 	if order.OrderType == BuyOrder {
-		// liquidityAmount := new(big.Int)
-		// // Step 1: Multiply amount * price
-		// liquidityAmount.Mul(order.Amount, order.Price)
-
-		// // Step 2: Multiply by 10^quoteTokenDecimals
-		// quoteMultiplier := new(
-		// 	big.Int,
-		// ).Exp(big.NewInt(10), big.NewInt(int64(quoteTokenDecimals)), nil)
-		// liquidityAmount.Mul(liquidityAmount, quoteMultiplier)
-
-		// // Step 3: Divide by 10^baseTokenDecimals
-		// baseDivisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(baseTokenDecimals)), nil)
-		// liquidityAmount.Div(liquidityAmount, baseDivisor)
-
-		// // Step 4: Divide by 10^8 (scaling factor)
-		// scalingDivisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(8), nil)
-		// liquidityAmount.Div(liquidityAmount, scalingDivisor)
-
 		service.marketService.UpdateLiquidity(
 			marketTicker,
 			order.Size,
 			new(big.Int),
 		)
 	} else {
-		// liquidityAmount := new(big.Int)
-		// // Step 1: Multiply amount * price
-		// liquidityAmount.Mul(order.Amount, order.Price)
-
-		// // Step 2: Multiply by 10^baseTokenDecimals
-		// baseMultiplier := new(
-		// 	big.Int,
-		// ).Exp(big.NewInt(10), big.NewInt(int64(baseTokenDecimals)), nil)
-		// liquidityAmount.Mul(liquidityAmount, baseMultiplier)
-
-		// // Step 3: Divide by 10^baseTokenDecimals
-		// quoteDivisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(quoteTokenDecimals)), nil)
-		// liquidityAmount.Div(liquidityAmount, quoteDivisor)
-
-		// // Step 4: Divide by 10^8 (scaling factor)
-		// scalingDivisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(8), nil)
-		// liquidityAmount.Div(liquidityAmount, scalingDivisor)
 		service.marketService.UpdateLiquidity(
 			marketTicker,
 			new(big.Int),
@@ -138,39 +103,52 @@ func (service *OrderService) FillOrder(order Order, marketTicker string) {
 	orderBook := service.OrderBooks[marketTicker]
 	amountRemaining := new(big.Int).Set(order.Size)
 
-	if order.OrderType == BuyOrder {
-		orderBookWiped := false
-		for amountRemaining.Cmp(big.NewInt(0)) > 0 && !orderBookWiped {
-			sellIndex := orderBook.SellIndex
-			if sellIndex > len(orderBook.Orders) || len(orderBook.Orders) == 0 {
-				orderBookWiped = true
-				break
-			}
-			sellOrder := orderBook.Orders[sellIndex]
-			amountAvailable := new(big.Int).Sub(sellOrder.Size, sellOrder.SizeFilled)
-			if amountAvailable.Cmp(amountRemaining) >= 0 {
-				order.SizeFilled.Add(order.SizeFilled, amountRemaining)
-				sellOrder.SizeFilled.Add(sellOrder.SizeFilled, amountRemaining)
-				amountRemaining = big.NewInt(0)
-			} else {
-				order.SizeFilled.Add(order.SizeFilled, amountAvailable)
-				amountRemaining.Sub(amountRemaining, amountAvailable)
-				sellOrder.SizeFilled.Add(sellOrder.SizeFilled, amountAvailable)
-			}
-
-			if sellOrder.SizeFilled.Cmp(sellOrder.Size) == 0 {
-				sellOrder.Status = Filled
-				orderBook.InActiveOrders = append(orderBook.InActiveOrders, sellOrder)
-				orderBook.Orders = append(
-					orderBook.Orders[:sellIndex],
-					orderBook.Orders[sellIndex+1:]...)
-			} else {
-				orderBook.Orders[sellIndex] = sellOrder
-			}
-			orderBook.LastPrice = sellOrder.Price
+	for amountRemaining.Cmp(big.NewInt(0)) > 0 {
+		if len(orderBook.Orders) == 0 {
+			break
 		}
-	} else {
+		var makerIndex int
+		if order.OrderType == BuyOrder {
+			makerIndex = orderBook.SellIndex
+		} else {
+			makerIndex = orderBook.BuyIndex
+		}
 
+		if makerIndex < 0 || makerIndex >= len(orderBook.Orders) {
+			break
+		}
+
+		makerOrder := orderBook.Orders[makerIndex]
+		amountAvailable := new(big.Int).Sub(makerOrder.Size, makerOrder.SizeFilled)
+		if amountAvailable.Cmp(amountRemaining) >= 0 {
+			order.SizeFilled.Add(order.SizeFilled, amountRemaining)
+			makerOrder.SizeFilled.Add(makerOrder.SizeFilled, amountRemaining)
+			amountRemaining = big.NewInt(0)
+		} else {
+			order.SizeFilled.Add(order.SizeFilled, amountAvailable)
+			amountRemaining.Sub(amountRemaining, amountAvailable)
+			makerOrder.SizeFilled.Add(makerOrder.SizeFilled, amountAvailable)
+		}
+
+		if makerOrder.SizeFilled.Cmp(makerOrder.Size) == 0 {
+			makerOrder.Status = Filled
+			orderBook.InActiveOrders = append(orderBook.InActiveOrders, makerOrder)
+
+			if order.OrderType == BuyOrder {
+				orderBook.Orders = append(
+					orderBook.Orders[:makerIndex],
+					orderBook.Orders[makerIndex+1:]...)
+			} else {
+				orderBook.Orders = append(
+					orderBook.Orders[:makerIndex],
+					orderBook.Orders[makerIndex+1:]...)
+				orderBook.SellIndex = orderBook.SellIndex - 1
+				orderBook.BuyIndex = orderBook.BuyIndex - 1
+			}
+		} else {
+			orderBook.Orders[makerIndex] = makerOrder
+		}
+		orderBook.LastPrice = makerOrder.Price
 	}
 	order.Status = Filled
 	orderBook.InActiveOrders = append(orderBook.InActiveOrders, order)
@@ -208,7 +186,12 @@ func (service *OrderService) PrintActiveOrders(marketTicker string) {
 		return
 	}
 
-	for _, order := range orderBook.Orders {
+	orders := append([]Order{}, orderBook.Orders...)
+	sort.Slice(orders, func(i, j int) bool {
+		return orders[i].Price.Cmp(orders[j].Price) > 0
+	})
+
+	for _, order := range orders {
 		fmt.Printf(
 			"Order ID:%d | Type: %s | Size: %d | Price: %d | Size Filled: %d | Market: %s | Time: %s | Status: %s\n",
 			order.ID,
@@ -241,7 +224,12 @@ func (service *OrderService) PrintInActiveOrders(marketTicker string) {
 		return
 	}
 
-	for _, order := range orderBook.InActiveOrders {
+	orders := append([]Order{}, orderBook.InActiveOrders...)
+	sort.Slice(orders, func(i, j int) bool {
+		return orders[i].CreatedAt.After(orders[j].CreatedAt)
+	})
+
+	for _, order := range orders {
 		fmt.Printf(
 			"Order ID:%d | Type: %s | Size: %d | Price: %d | Size Filled: %d | Market: %s | Time: %s | Status: %s\n",
 			order.ID,
