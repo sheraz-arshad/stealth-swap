@@ -137,14 +137,11 @@ func (service *OrderService) FillOrder(order Order, marketTicker string) {
 			makerOrder.Status = Filled
 			orderBook.InActiveOrders = append(orderBook.InActiveOrders, makerOrder)
 
-			if order.OrderType == BuyOrder {
-				orderBook.Orders = append(
-					orderBook.Orders[:makerIndex],
-					orderBook.Orders[makerIndex+1:]...)
-			} else {
-				orderBook.Orders = append(
-					orderBook.Orders[:makerIndex],
-					orderBook.Orders[makerIndex+1:]...)
+			orderBook.Orders = append(
+				orderBook.Orders[:makerIndex],
+				orderBook.Orders[makerIndex+1:]...)
+
+			if order.OrderType == SellOrder {
 				orderBook.SellIndex = orderBook.SellIndex - 1
 				orderBook.BuyIndex = orderBook.BuyIndex - 1
 			}
