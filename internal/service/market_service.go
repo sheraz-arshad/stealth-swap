@@ -41,8 +41,8 @@ func (service *MarketService) CreateMarket(
 		BaseTokenDecimals:        baseTokenDecimals,
 		QuoteTokenDecimals:       quoteTokenDecimals,
 		MarketTicker:             marketTicker,
-		BuyLiquidityInBaseToken:  new(big.Int),
-		SellLiquidityInBaseToken: new(big.Int),
+		BuyLiquidityInBaseToken:  big.NewInt(0),
+		SellLiquidityInBaseToken: big.NewInt(0),
 	}
 
 	return service.Markets[marketTicker]

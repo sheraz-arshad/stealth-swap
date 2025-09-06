@@ -88,12 +88,12 @@ func (service *OrderService) CreateOrder(order Order, marketTicker string) {
 		service.marketService.UpdateLiquidity(
 			marketTicker,
 			order.Size,
-			new(big.Int),
+			big.NewInt(0),
 		)
 	} else {
 		service.marketService.UpdateLiquidity(
 			marketTicker,
-			new(big.Int),
+			big.NewInt(0),
 			order.Size,
 		)
 	}
@@ -153,10 +153,28 @@ func (service *OrderService) FillOrder(order Order, marketTicker string) {
 	order.Status = Filled
 	orderBook.InActiveOrders = append(orderBook.InActiveOrders, order)
 	service.OrderBooks[marketTicker] = orderBook
+
+	if order.OrderType == BuyOrder {
+		service.marketService.UpdateLiquidity(
+			marketTicker,
+			big.NewInt(0),
+			new(big.Int).Neg(order.SizeFilled),
+		)
+	} else {
+		service.marketService.UpdateLiquidity(
+			marketTicker,
+			new(big.Int).Neg(order.SizeFilled),
+			big.NewInt(0),
+		)
+	}
 }
 
-func (service *OrderService) GetOrdersByMarketTicker(marketTicker string) []Order {
+func (service *OrderService) GetActiveOrdersByMarketTicker(marketTicker string) []Order {
 	return append([]Order{}, service.OrderBooks[marketTicker].Orders...)
+}
+
+func (service *OrderService) GetInActiveOrdersByMarketTicker(marketTicker string) []Order {
+	return append([]Order{}, service.OrderBooks[marketTicker].InActiveOrders...)
 }
 
 func (service *OrderService) GetNextOrderID() int64 {
