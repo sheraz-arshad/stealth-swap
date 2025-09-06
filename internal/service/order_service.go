@@ -5,6 +5,8 @@ import (
 	"math/big"
 	"sort"
 	"time"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 type OrderBook struct {
@@ -37,7 +39,8 @@ const (
 )
 
 type Order struct {
-	ID int64
+	ID   int64
+	User common.Address
 	OrderType
 	Size       *big.Int
 	Price      *big.Int

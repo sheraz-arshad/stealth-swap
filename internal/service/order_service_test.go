@@ -5,13 +5,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/assert"
+
+	"x-swap/internal/utils"
 )
 
 var marketService *MarketService
 var marketTicker string
 var market Market
 var orderService *OrderService
+var userService *UserService
+var users []common.Address
 
 func setup() {
 	marketService = NewMarketService()
@@ -19,16 +24,35 @@ func setup() {
 	marketTicker = GetMarketTicker("BTC", "USD")
 	market = marketService.GetMarket(marketTicker)
 	orderService = NewOrderService(marketService)
+	userService = NewUserService(orderService, marketService)
+	for i := 0; i < 10; i++ {
+		users = append(users, utils.GenerateRandomAddress())
+		userService.Users[users[i]] = User{
+			Balance:       make(map[string]*big.Int),
+			BalanceLocked: make(map[string]*big.Int),
+		}
+	}
+}
+
+func topup(user common.Address, amount *big.Int, asset string) {
+	if userService.Users[user].Balance[asset] == nil {
+		userService.Users[user].Balance[asset] = amount
+	} else {
+		userService.Users[user].Balance[asset].Add(userService.Users[user].Balance[asset], amount)
+	}
+	// fmt.Println(userService.Users[user].Balance[asset])
 }
 
 func TestCreateBuyOrder(t *testing.T) {
 	setup()
+	topup(users[0], big.NewInt(200_000e6), "USD")
 
 	orderId := orderService.GetNextOrderID()
 	size := big.NewInt(1e8)
 	price := big.NewInt(111_000e6)
 	order := Order{
 		ID:         orderId,
+		User:       users[0],
 		OrderType:  BuyOrder,
 		Size:       size,
 		Price:      price,
@@ -37,7 +61,7 @@ func TestCreateBuyOrder(t *testing.T) {
 		Status:     Open,
 		Market:     market,
 	}
-	orderService.CreateOrder(order, marketTicker)
+	userService.PlaceOrder(order, false)
 	orderExpected := orderService.GetActiveOrdersByMarketTicker(marketTicker)[0]
 	assert.Equal(t, orderExpected.ID, orderId)
 	assert.Equal(t, orderExpected.OrderType, BuyOrder)
@@ -54,12 +78,14 @@ func TestCreateBuyOrder(t *testing.T) {
 
 func TestCreateSellOrder(t *testing.T) {
 	setup()
+	topup(users[0], big.NewInt(2e8), "BTC")
 
 	orderId := orderService.GetNextOrderID()
 	size := big.NewInt(1e8)
 	price := big.NewInt(112_000e6)
 	order := Order{
 		ID:         orderId,
+		User:       users[0],
 		OrderType:  SellOrder,
 		Size:       size,
 		Price:      price,
@@ -68,7 +94,7 @@ func TestCreateSellOrder(t *testing.T) {
 		Status:     Open,
 		Market:     market,
 	}
-	orderService.CreateOrder(order, marketTicker)
+	userService.PlaceOrder(order, false)
 	orderExpected := orderService.GetActiveOrdersByMarketTicker(marketTicker)[0]
 	assert.Equal(t, orderExpected.ID, orderId)
 	assert.Equal(t, orderExpected.OrderType, SellOrder)
@@ -85,10 +111,12 @@ func TestCreateSellOrder(t *testing.T) {
 
 func TestFillOrder(t *testing.T) {
 	setup()
+	topup(users[0], big.NewInt(500_000e6), "USD")
 	// add buy liquidity
 	for i := 0; i < 2; i++ {
 		order := Order{
 			ID:         orderService.GetNextOrderID(),
+			User:       users[0],
 			OrderType:  BuyOrder,
 			Size:       big.NewInt(1e8),
 			Price:      big.NewInt(111_000e6 - int64(i*2000e6)),
@@ -97,16 +125,18 @@ func TestFillOrder(t *testing.T) {
 			Status:     Open,
 			Market:     market,
 		}
-		orderService.CreateOrder(order, marketTicker)
+		userService.PlaceOrder(order, false)
 	}
 
 	// fmt.Println(market.BuyLiquidityInBaseToken)
 	// fmt.Println(market.SellLiquidityInBaseToken)
 
+	topup(users[1], big.NewInt(5e8), "BTC")
 	// add sell liquidity
 	for i := 0; i < 2; i++ {
 		order := Order{
 			ID:         orderService.GetNextOrderID(),
+			User:       users[1],
 			OrderType:  SellOrder,
 			Size:       big.NewInt(1e8),
 			Price:      big.NewInt(112_000e6 + int64(i*2000e6)),
@@ -115,15 +145,17 @@ func TestFillOrder(t *testing.T) {
 			Status:     Open,
 			Market:     market,
 		}
-		orderService.CreateOrder(order, marketTicker)
+		userService.PlaceOrder(order, false)
 	}
 
 	// fmt.Println(market.BuyLiquidityInBaseToken)
 	// fmt.Println(market.SellLiquidityInBaseToken)
 
+	topup(users[2], big.NewInt(5e8), "BTC")
 	// fill order
 	order := Order{
 		ID:         orderService.GetNextOrderID(),
+		User:       users[2],
 		OrderType:  SellOrder,
 		Size:       big.NewInt(2e8),
 		Price:      big.NewInt(112_000e6),
@@ -132,7 +164,7 @@ func TestFillOrder(t *testing.T) {
 		Status:     Open,
 		Market:     market,
 	}
-	orderService.FillOrder(order, marketTicker)
+	userService.PlaceOrder(order, true)
 
 	// all buy side is filled
 	activeOrders := orderService.GetActiveOrdersByMarketTicker(marketTicker)
