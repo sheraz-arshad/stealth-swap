@@ -18,9 +18,9 @@ type OrderBook struct {
 }
 
 type OrderService struct {
-	OrderBooks    map[string]OrderBook
-	marketService *MarketService
-	orderID       int64
+	OrderBooks      map[string]OrderBook
+	serviceRegistry *ServiceRegistry
+	orderID         int64
 }
 
 type OrderType string
@@ -50,12 +50,15 @@ type Order struct {
 	Market     Market
 }
 
-func NewOrderService(marketService *MarketService) *OrderService {
+func NewOrderService() *OrderService {
 	return &OrderService{
-		OrderBooks:    make(map[string]OrderBook),
-		marketService: marketService,
-		orderID:       0,
+		OrderBooks: make(map[string]OrderBook),
+		orderID:    0,
 	}
+}
+
+func (service *OrderService) SetServiceRegistry(serviceRegistry *ServiceRegistry) {
+	service.serviceRegistry = serviceRegistry
 }
 
 func (service *OrderService) CreateOrder(order Order, marketTicker string) {
@@ -88,13 +91,13 @@ func (service *OrderService) CreateOrder(order Order, marketTicker string) {
 	service.OrderBooks[marketTicker] = orderBook
 
 	if order.OrderType == BuyOrder {
-		service.marketService.UpdateLiquidity(
+		service.serviceRegistry.GetMarketService().UpdateLiquidity(
 			marketTicker,
 			order.Size,
 			big.NewInt(0),
 		)
 	} else {
-		service.marketService.UpdateLiquidity(
+		service.serviceRegistry.GetMarketService().UpdateLiquidity(
 			marketTicker,
 			big.NewInt(0),
 			order.Size,
@@ -104,7 +107,18 @@ func (service *OrderService) CreateOrder(order Order, marketTicker string) {
 
 func (service *OrderService) FillOrder(order Order, marketTicker string) {
 	orderBook := service.OrderBooks[marketTicker]
+	baseMultiplier := new(
+		big.Int,
+	).Exp(big.NewInt(10), big.NewInt(int64(order.Market.BaseTokenDecimals)), nil)
 	amountRemaining := new(big.Int).Set(order.Size)
+
+	var takerAmount *big.Int
+	if order.OrderType == BuyOrder {
+		takerAmount = new(big.Int).Mul(order.Size, order.Price)
+		takerAmount.Div(takerAmount, baseMultiplier)
+	} else {
+		takerAmount = new(big.Int).Set(order.Size)
+	}
 
 	for amountRemaining.Cmp(big.NewInt(0)) > 0 {
 		if len(orderBook.Orders) == 0 {
@@ -123,15 +137,82 @@ func (service *OrderService) FillOrder(order Order, marketTicker string) {
 
 		makerOrder := orderBook.Orders[makerIndex]
 		amountAvailable := new(big.Int).Sub(makerOrder.Size, makerOrder.SizeFilled)
+		var fillableAmount *big.Int
 		if amountAvailable.Cmp(amountRemaining) >= 0 {
-			order.SizeFilled.Add(order.SizeFilled, amountRemaining)
-			makerOrder.SizeFilled.Add(makerOrder.SizeFilled, amountRemaining)
-			amountRemaining = big.NewInt(0)
+			fillableAmount = amountRemaining
 		} else {
-			order.SizeFilled.Add(order.SizeFilled, amountAvailable)
-			amountRemaining.Sub(amountRemaining, amountAvailable)
-			makerOrder.SizeFilled.Add(makerOrder.SizeFilled, amountAvailable)
+			fillableAmount = amountAvailable
 		}
+		sizeFilled := new(big.Int).Set(fillableAmount)
+
+		if order.OrderType == BuyOrder {
+			quoteTokenAmountForMaker := new(big.Int).Mul(fillableAmount, makerOrder.Price)
+			quoteTokenAmountForMaker.Div(quoteTokenAmountForMaker, baseMultiplier)
+
+			if quoteTokenAmountForMaker.Cmp(takerAmount) > 0 {
+				quoteTokenAmountForMaker = takerAmount
+				takerAmount = big.NewInt(0)
+				sizeFilled = new(big.Int).Mul(quoteTokenAmountForMaker, baseMultiplier)
+				sizeFilled.Div(sizeFilled, makerOrder.Price)
+			}
+			// add quote token amount for maker
+			service.serviceRegistry.GetUserService().AddBalance(
+				makerOrder.User,
+				order.Market.QuoteToken,
+				quoteTokenAmountForMaker,
+			)
+			// add base token amount (size filled) for taker
+			service.serviceRegistry.GetUserService().AddBalance(
+				order.User,
+				order.Market.BaseToken,
+				sizeFilled,
+			)
+			service.serviceRegistry.GetUserService().SubBalance(
+				makerOrder.User,
+				order.Market.BaseToken,
+				sizeFilled,
+			)
+			service.serviceRegistry.GetUserService().SubBalance(
+				order.User,
+				order.Market.QuoteToken,
+				quoteTokenAmountForMaker,
+			)
+		} else {
+			if fillableAmount.Cmp(takerAmount) > 0 {
+				fillableAmount = takerAmount
+				takerAmount = big.NewInt(0)
+				sizeFilled = fillableAmount
+			}
+
+			quoteTokenAmountForTaker := new(big.Int).Mul(fillableAmount, makerOrder.Price)
+			quoteTokenAmountForTaker.Div(quoteTokenAmountForTaker, baseMultiplier)
+
+			// add base token amount (size filled) for maker
+			service.serviceRegistry.GetUserService().AddBalance(
+				makerOrder.User,
+				order.Market.BaseToken,
+				sizeFilled,
+			)
+			// add quote token amount for taker
+			service.serviceRegistry.GetUserService().AddBalance(
+				order.User,
+				order.Market.QuoteToken,
+				quoteTokenAmountForTaker,
+			)
+			service.serviceRegistry.GetUserService().SubBalance(
+				order.User,
+				order.Market.BaseToken,
+				sizeFilled,
+			)
+			service.serviceRegistry.GetUserService().SubBalance(
+				makerOrder.User,
+				order.Market.QuoteToken,
+				quoteTokenAmountForTaker,
+			)
+		}
+		amountRemaining.Sub(amountRemaining, sizeFilled)
+		order.SizeFilled.Add(order.SizeFilled, sizeFilled)
+		makerOrder.SizeFilled.Add(makerOrder.SizeFilled, sizeFilled)
 
 		if makerOrder.SizeFilled.Cmp(makerOrder.Size) == 0 {
 			makerOrder.Status = Filled
@@ -155,19 +236,72 @@ func (service *OrderService) FillOrder(order Order, marketTicker string) {
 	service.OrderBooks[marketTicker] = orderBook
 
 	if order.OrderType == BuyOrder {
-		service.marketService.UpdateLiquidity(
+		service.serviceRegistry.GetMarketService().UpdateLiquidity(
 			marketTicker,
 			big.NewInt(0),
 			new(big.Int).Neg(order.SizeFilled),
 		)
 	} else {
-		service.marketService.UpdateLiquidity(
+		service.serviceRegistry.GetMarketService().UpdateLiquidity(
 			marketTicker,
 			new(big.Int).Neg(order.SizeFilled),
 			big.NewInt(0),
 		)
 	}
 }
+
+// func (service *OrderService) GetQuote(order Order, marketTicker string) *big.Int {
+// 	orderBook := service.OrderBooks[marketTicker]
+
+// 	sellIndex := orderBook.SellIndex
+// 	buyIndex := orderBook.BuyIndex
+// 	orders := make([]Order, len(orderBook.Orders))
+// 	for i, order := range orderBook.Orders {
+// 		orders[i] = order.Clone()
+// 	}
+
+// 	amountRemaining := new(big.Int).Set(order.Size)
+// 	for amountRemaining.Cmp(big.NewInt(0)) > 0 {
+// 		if len(orders) == 0 {
+// 			break
+// 		}
+// 		var makerIndex int
+// 		if order.OrderType == BuyOrder {
+// 			makerIndex = sellIndex
+// 		} else {
+// 			makerIndex = buyIndex
+// 		}
+
+// 		if makerIndex < 0 || makerIndex >= len(orders) {
+// 			break
+// 		}
+
+// 		makerOrder := orders[makerIndex]
+// 		amountAvailable := new(big.Int).Sub(makerOrder.Size, makerOrder.SizeFilled)
+// 		if amountAvailable.Cmp(amountRemaining) >= 0 {
+// 			order.SizeFilled.Add(order.SizeFilled, amountRemaining)
+// 			makerOrder.SizeFilled.Add(makerOrder.SizeFilled, amountRemaining)
+// 			amountRemaining = big.NewInt(0)
+// 		} else {
+// 			order.SizeFilled.Add(order.SizeFilled, amountAvailable)
+// 			amountRemaining.Sub(amountRemaining, amountAvailable)
+// 			makerOrder.SizeFilled.Add(makerOrder.SizeFilled, amountAvailable)
+// 		}
+
+// 		if makerOrder.SizeFilled.Cmp(makerOrder.Size) == 0 {
+// 			orders = append(
+// 				orders[:makerIndex],
+// 				orders[makerIndex+1:]...)
+
+// 			if order.OrderType == SellOrder {
+// 				sellIndex = sellIndex - 1
+// 				buyIndex = buyIndex - 1
+// 			}
+// 		} else {
+// 			orders[makerIndex] = makerOrder
+// 		}
+// 	}
+// }
 
 func (service *OrderService) GetActiveOrdersByMarketTicker(marketTicker string) []Order {
 	return append([]Order{}, service.OrderBooks[marketTicker].Orders...)
@@ -182,11 +316,25 @@ func (service *OrderService) GetNextOrderID() int64 {
 	return service.orderID
 }
 
+func (order Order) Clone() Order {
+	return Order{
+		ID:         order.ID,
+		User:       order.User,
+		OrderType:  order.OrderType,
+		Size:       new(big.Int).Set(order.Size),
+		Price:      new(big.Int).Set(order.Price),
+		SizeFilled: new(big.Int).Set(order.SizeFilled),
+		CreatedAt:  order.CreatedAt,
+		Status:     order.Status,
+		Market:     order.Market,
+	}
+}
+
 // PrintOrders prints all orders to console in a formatted way
 func (service *OrderService) PrintActiveOrders(marketTicker string) {
 	fmt.Println("=== ACTIVE ORDERS ===")
 
-	market := service.marketService.GetMarket(marketTicker)
+	market := service.serviceRegistry.GetMarketService().GetMarket(marketTicker)
 	quoteMultiplier := new(
 		big.Int,
 	).Exp(big.NewInt(10), big.NewInt(int64(market.QuoteTokenDecimals)), nil)
@@ -228,7 +376,7 @@ func (service *OrderService) PrintActiveOrders(marketTicker string) {
 func (service *OrderService) PrintInActiveOrders(marketTicker string) {
 	fmt.Println("=== INACTIVE ORDERS ===")
 
-	market := service.marketService.GetMarket(marketTicker)
+	market := service.serviceRegistry.GetMarketService().GetMarket(marketTicker)
 	quoteMultiplier := new(
 		big.Int,
 	).Exp(big.NewInt(10), big.NewInt(int64(market.QuoteTokenDecimals)), nil)

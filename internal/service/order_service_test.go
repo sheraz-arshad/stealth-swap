@@ -16,6 +16,7 @@ var marketTicker string
 var market Market
 var orderService *OrderService
 var userService *UserService
+var serviceRegistry *ServiceRegistry
 var users []common.Address
 
 func setup() {
@@ -23,8 +24,12 @@ func setup() {
 	marketService.CreateMarket("BTC", "USD", 8, 6)
 	marketTicker = GetMarketTicker("BTC", "USD")
 	market = marketService.GetMarket(marketTicker)
-	orderService = NewOrderService(marketService)
-	userService = NewUserService(orderService, marketService)
+	userService = NewUserService()
+	orderService = NewOrderService()
+	serviceRegistry = NewServiceRegistry(marketService, userService, orderService)
+	orderService.SetServiceRegistry(serviceRegistry)
+	userService.SetServiceRegistry(serviceRegistry)
+
 	for i := 0; i < 10; i++ {
 		users = append(users, utils.GenerateRandomAddress())
 		userService.Users[users[i]] = User{
@@ -35,12 +40,7 @@ func setup() {
 }
 
 func topup(user common.Address, amount *big.Int, asset string) {
-	if userService.Users[user].Balance[asset] == nil {
-		userService.Users[user].Balance[asset] = amount
-	} else {
-		userService.Users[user].Balance[asset].Add(userService.Users[user].Balance[asset], amount)
-	}
-	// fmt.Println(userService.Users[user].Balance[asset])
+	userService.AddBalance(user, asset, amount)
 }
 
 func TestCreateBuyOrder(t *testing.T) {
@@ -164,7 +164,11 @@ func TestFillOrder(t *testing.T) {
 		Status:     Open,
 		Market:     market,
 	}
+	// fmt.Println(userService.Users[users[2]].Balance["BTC"])
+	// fmt.Println(userService.Users[users[2]].Balance["USD"])
 	userService.PlaceOrder(order, true)
+	// fmt.Println(userService.Users[users[2]].Balance["BTC"])
+	// fmt.Println(userService.Users[users[2]].Balance["USD"])
 
 	// all buy side is filled
 	activeOrders := orderService.GetActiveOrdersByMarketTicker(marketTicker)

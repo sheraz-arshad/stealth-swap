@@ -12,26 +12,27 @@ type User struct {
 }
 
 type UserService struct {
-	Users         map[common.Address]User
-	UserList      []common.Address
-	orderService  *OrderService
-	marketService *MarketService
+	Users           map[common.Address]User
+	UserList        []common.Address
+	serviceRegistry *ServiceRegistry
 }
 
-func NewUserService(orderService *OrderService, marketService *MarketService) *UserService {
+func NewUserService() *UserService {
 	return &UserService{
-		Users:         make(map[common.Address]User),
-		UserList:      []common.Address{},
-		orderService:  orderService,
-		marketService: marketService,
+		Users:    make(map[common.Address]User),
+		UserList: []common.Address{},
 	}
+}
+
+func (service *UserService) SetServiceRegistry(serviceRegistry *ServiceRegistry) {
+	service.serviceRegistry = serviceRegistry
 }
 
 func (service *UserService) PlaceOrder(order Order, fill bool) {
 	// check if order is at the market price, fill it
 	// else put it in the order book
 
-	market := service.marketService.GetMarket(order.Market.MarketTicker)
+	market := service.serviceRegistry.GetMarketService().GetMarket(order.Market.MarketTicker)
 	baseMultiplier := new(
 		big.Int,
 	).Exp(big.NewInt(10), big.NewInt(int64(market.BaseTokenDecimals)), nil)
@@ -52,17 +53,28 @@ func (service *UserService) PlaceOrder(order Order, fill bool) {
 		panic("Insufficient balance")
 	}
 
-	if service.Users[order.User].BalanceLocked[asset] == nil {
-		service.Users[order.User].BalanceLocked[asset] = amount
-	} else {
-		service.Users[order.User].BalanceLocked[asset].Add(service.Users[order.User].BalanceLocked[asset], amount)
-	}
-
 	if fill {
-		service.orderService.FillOrder(order, order.Market.MarketTicker)
+		service.serviceRegistry.GetOrderService().FillOrder(order, order.Market.MarketTicker)
 	} else {
-		service.orderService.CreateOrder(order, order.Market.MarketTicker)
+		if service.Users[order.User].BalanceLocked[asset] == nil {
+			service.Users[order.User].BalanceLocked[asset] = amount
+		} else {
+			service.Users[order.User].BalanceLocked[asset].Add(service.Users[order.User].BalanceLocked[asset], amount)
+		}
+		service.serviceRegistry.GetOrderService().CreateOrder(order, order.Market.MarketTicker)
 	}
+}
+
+func (service *UserService) AddBalance(user common.Address, asset string, amount *big.Int) {
+	if service.Users[user].Balance[asset] == nil {
+		service.Users[user].Balance[asset] = amount
+	} else {
+		service.Users[user].Balance[asset].Add(service.Users[user].Balance[asset], amount)
+	}
+}
+
+func (service *UserService) SubBalance(user common.Address, asset string, amount *big.Int) {
+	service.Users[user].Balance[asset].Sub(service.Users[user].Balance[asset], amount)
 }
 
 func (service *UserService) GetAssetAmount(user common.Address, asset string) *big.Int {
