@@ -181,6 +181,8 @@ func (service *OrderService) FillOrder(order Order, marketTicker string) {
 				takerAmount = big.NewInt(0)
 				sizeFilled = new(big.Int).Mul(quoteTokenAmountForMaker, baseMultiplier)
 				sizeFilled.Div(sizeFilled, makerOrder.Price)
+			} else {
+				takerAmount.Sub(takerAmount, quoteTokenAmountForMaker)
 			}
 			// add quote token amount for maker
 			userService.AddBalance(
@@ -209,6 +211,8 @@ func (service *OrderService) FillOrder(order Order, marketTicker string) {
 				fillableAmount = takerAmount
 				takerAmount = big.NewInt(0)
 				sizeFilled = fillableAmount
+			} else {
+				takerAmount.Sub(takerAmount, fillableAmount)
 			}
 
 			quoteTokenAmountForTaker := new(big.Int).Mul(fillableAmount, makerOrder.Price)
@@ -282,58 +286,115 @@ func (service *OrderService) FillOrder(order Order, marketTicker string) {
 	}
 }
 
-// func (service *OrderService) GetQuote(order Order, marketTicker string) *big.Int {
-// 	orderBook := service.OrderBooks[marketTicker]
+func (service *OrderService) GetQuote(
+	order Order,
+	marketTicker string,
+) (*big.Int, *big.Int, *big.Int) {
+	orderBook := service.OrderBooks[marketTicker]
+	orders := make([]Order, len(orderBook.Orders))
+	for i, order := range orderBook.Orders {
+		orders[i] = order.Clone()
+	}
+	buyIndex := orderBook.BuyIndex
+	sellIndex := orderBook.SellIndex
+	amountRemaining := new(big.Int).Set(order.Size)
+	amountOut := big.NewInt(0)
 
-// 	sellIndex := orderBook.SellIndex
-// 	buyIndex := orderBook.BuyIndex
-// 	orders := make([]Order, len(orderBook.Orders))
-// 	for i, order := range orderBook.Orders {
-// 		orders[i] = order.Clone()
-// 	}
+	baseMultiplier := new(
+		big.Int,
+	).Exp(big.NewInt(10), big.NewInt(int64(order.Market.BaseTokenDecimals)), nil)
 
-// 	amountRemaining := new(big.Int).Set(order.Size)
-// 	for amountRemaining.Cmp(big.NewInt(0)) > 0 {
-// 		if len(orders) == 0 {
-// 			break
-// 		}
-// 		var makerIndex int
-// 		if order.OrderType == BuyOrder {
-// 			makerIndex = sellIndex
-// 		} else {
-// 			makerIndex = buyIndex
-// 		}
+	var takerAmount *big.Int
+	if order.OrderType == BuyOrder {
+		takerAmount = new(big.Int).Mul(order.Size, order.Price)
+		takerAmount.Div(takerAmount, baseMultiplier)
+	} else {
+		takerAmount = new(big.Int).Set(order.Size)
+	}
+	_takerAmount := new(big.Int).Set(takerAmount)
 
-// 		if makerIndex < 0 || makerIndex >= len(orders) {
-// 			break
-// 		}
+	for amountRemaining.Cmp(big.NewInt(0)) > 0 {
+		if len(orderBook.Orders) == 0 {
+			break
+		}
+		var makerIndex int
+		if order.OrderType == BuyOrder {
+			makerIndex = sellIndex
+		} else {
+			makerIndex = buyIndex
+		}
 
-// 		makerOrder := orders[makerIndex]
-// 		amountAvailable := new(big.Int).Sub(makerOrder.Size, makerOrder.SizeFilled)
-// 		if amountAvailable.Cmp(amountRemaining) >= 0 {
-// 			order.SizeFilled.Add(order.SizeFilled, amountRemaining)
-// 			makerOrder.SizeFilled.Add(makerOrder.SizeFilled, amountRemaining)
-// 			amountRemaining = big.NewInt(0)
-// 		} else {
-// 			order.SizeFilled.Add(order.SizeFilled, amountAvailable)
-// 			amountRemaining.Sub(amountRemaining, amountAvailable)
-// 			makerOrder.SizeFilled.Add(makerOrder.SizeFilled, amountAvailable)
-// 		}
+		if makerIndex < 0 || makerIndex >= len(orders) {
+			break
+		}
 
-// 		if makerOrder.SizeFilled.Cmp(makerOrder.Size) == 0 {
-// 			orders = append(
-// 				orders[:makerIndex],
-// 				orders[makerIndex+1:]...)
+		makerOrder := orders[makerIndex]
+		amountAvailable := new(big.Int).Sub(makerOrder.Size, makerOrder.SizeFilled)
+		var fillableAmount *big.Int
+		if amountAvailable.Cmp(amountRemaining) >= 0 {
+			fillableAmount = amountRemaining
+		} else {
+			fillableAmount = amountAvailable
+		}
+		sizeFilled := new(big.Int).Set(fillableAmount)
 
-// 			if order.OrderType == SellOrder {
-// 				sellIndex = sellIndex - 1
-// 				buyIndex = buyIndex - 1
-// 			}
-// 		} else {
-// 			orders[makerIndex] = makerOrder
-// 		}
-// 	}
-// }
+		if order.OrderType == BuyOrder {
+			quoteTokenAmountForMaker := new(big.Int).Mul(fillableAmount, makerOrder.Price)
+			quoteTokenAmountForMaker.Div(quoteTokenAmountForMaker, baseMultiplier)
+
+			if quoteTokenAmountForMaker.Cmp(takerAmount) > 0 {
+				quoteTokenAmountForMaker = takerAmount
+				takerAmount = big.NewInt(0)
+				sizeFilled = new(big.Int).Mul(quoteTokenAmountForMaker, baseMultiplier)
+				sizeFilled.Div(sizeFilled, makerOrder.Price)
+			} else {
+				takerAmount.Sub(takerAmount, quoteTokenAmountForMaker)
+			}
+			amountOut.Add(amountOut, sizeFilled)
+		} else {
+			if fillableAmount.Cmp(takerAmount) > 0 {
+				fillableAmount = takerAmount
+				takerAmount = big.NewInt(0)
+				sizeFilled = fillableAmount
+			} else {
+				takerAmount.Sub(takerAmount, fillableAmount)
+			}
+
+			quoteTokenAmountForTaker := new(big.Int).Mul(fillableAmount, makerOrder.Price)
+			quoteTokenAmountForTaker.Div(quoteTokenAmountForTaker, baseMultiplier)
+
+			amountOut.Add(amountOut, quoteTokenAmountForTaker)
+		}
+		amountRemaining.Sub(amountRemaining, sizeFilled)
+		order.SizeFilled.Add(order.SizeFilled, sizeFilled)
+		makerOrder.SizeFilled.Add(makerOrder.SizeFilled, sizeFilled)
+
+		if makerOrder.SizeFilled.Cmp(makerOrder.Size) == 0 {
+			orders = append(
+				orders[:makerIndex],
+				orders[makerIndex+1:]...)
+
+			if order.OrderType == SellOrder {
+				sellIndex = sellIndex - 1
+				buyIndex = buyIndex - 1
+			}
+		} else {
+			orders[makerIndex] = makerOrder
+		}
+	}
+
+	amountIn := new(big.Int).Sub(_takerAmount, takerAmount)
+	var executionPrice *big.Int
+	if order.OrderType == BuyOrder {
+		executionPrice = new(big.Int).Mul(amountIn, baseMultiplier)
+		executionPrice.Div(executionPrice, amountOut)
+	} else {
+		executionPrice = new(big.Int).Mul(amountOut, baseMultiplier)
+		executionPrice.Div(executionPrice, amountIn)
+	}
+
+	return amountIn, amountOut, executionPrice
+}
 
 func (service *OrderService) GetActiveOrdersByMarketTicker(marketTicker string) []Order {
 	return append([]Order{}, service.OrderBooks[marketTicker].Orders...)

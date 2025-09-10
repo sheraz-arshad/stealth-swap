@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -164,11 +165,22 @@ func TestFillOrder(t *testing.T) {
 		Status:     Open,
 		Market:     market,
 	}
-	// fmt.Println(userService.Users[users[2]].Balance["BTC"])
-	// fmt.Println(userService.Users[users[2]].Balance["USD"])
+
+	amountIn, amountOut, executionPrice := orderService.GetQuote(order.Clone(), marketTicker)
+	fmt.Println(amountIn)
+	fmt.Println(amountOut)
+	fmt.Println(executionPrice)
+	for i := 0; i < 3; i++ {
+		fmt.Println(i)
+		fmt.Println(userService.Users[users[i]].Balance["BTC"])
+		fmt.Println(userService.Users[users[i]].Balance["USD"])
+	}
 	userService.PlaceOrder(order, true)
-	// fmt.Println(userService.Users[users[2]].Balance["BTC"])
-	// fmt.Println(userService.Users[users[2]].Balance["USD"])
+	for i := 0; i < 3; i++ {
+		fmt.Println(i)
+		fmt.Println(userService.Users[users[i]].Balance["BTC"])
+		fmt.Println(userService.Users[users[i]].Balance["USD"])
+	}
 
 	// all buy side is filled
 	activeOrders := orderService.GetActiveOrdersByMarketTicker(marketTicker)
