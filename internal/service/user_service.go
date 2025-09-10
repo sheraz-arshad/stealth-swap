@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -28,11 +29,27 @@ func (service *UserService) SetServiceRegistry(serviceRegistry *ServiceRegistry)
 	service.serviceRegistry = serviceRegistry
 }
 
+func (service *UserService) GetServiceRegistry() (*ServiceRegistry, error) {
+	if service.serviceRegistry == nil {
+		return nil, errors.New("service registry not set")
+	}
+	return service.serviceRegistry, nil
+}
+
 func (service *UserService) PlaceOrder(order Order, fill bool) {
 	// check if order is at the market price, fill it
 	// else put it in the order book
 
-	market := service.serviceRegistry.GetMarketService().GetMarket(order.Market.MarketTicker)
+	serviceRegistry, err := service.GetServiceRegistry()
+	if err != nil {
+		panic(err)
+	}
+	marketService, err := serviceRegistry.GetMarketService()
+	if err != nil {
+		panic(err)
+	}
+
+	market := marketService.GetMarket(order.Market.MarketTicker)
 	baseMultiplier := new(
 		big.Int,
 	).Exp(big.NewInt(10), big.NewInt(int64(market.BaseTokenDecimals)), nil)
@@ -53,15 +70,20 @@ func (service *UserService) PlaceOrder(order Order, fill bool) {
 		panic("Insufficient balance")
 	}
 
+	orderService, err := serviceRegistry.GetOrderService()
+	if err != nil {
+		panic(err)
+	}
+
 	if fill {
-		service.serviceRegistry.GetOrderService().FillOrder(order, order.Market.MarketTicker)
+		orderService.FillOrder(order, order.Market.MarketTicker)
 	} else {
 		if service.Users[order.User].BalanceLocked[asset] == nil {
 			service.Users[order.User].BalanceLocked[asset] = amount
 		} else {
 			service.Users[order.User].BalanceLocked[asset].Add(service.Users[order.User].BalanceLocked[asset], amount)
 		}
-		service.serviceRegistry.GetOrderService().CreateOrder(order, order.Market.MarketTicker)
+		orderService.CreateOrder(order, order.Market.MarketTicker)
 	}
 }
 
