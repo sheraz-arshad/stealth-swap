@@ -62,7 +62,7 @@ func (service *UserService) PlaceOrder(order Order, fill bool) {
 		amount.Div(amount, baseMultiplier)
 	} else {
 		asset = market.BaseToken
-		amount = order.Size
+		amount = new(big.Int).Set(order.Size)
 	}
 
 	assetBalance := service.Users[order.User].Balance[asset]
@@ -100,16 +100,22 @@ func (service *UserService) SubBalance(user common.Address, asset string, amount
 }
 
 func (service *UserService) GetAssetAmount(user common.Address, asset string) *big.Int {
+	if service.Users[user].Balance[asset] == nil {
+		return big.NewInt(0)
+	}
 	return service.Users[user].Balance[asset]
 }
 
 func (service *UserService) GetAssetAmountLocked(user common.Address, asset string) *big.Int {
+	if service.Users[user].BalanceLocked[asset] == nil {
+		return big.NewInt(0)
+	}
 	return service.Users[user].BalanceLocked[asset]
 }
 
 func (service *UserService) GetAssetAmountAvailable(user common.Address, asset string) *big.Int {
 	return new(big.Int).Sub(
-		service.Users[user].Balance[asset],
-		service.Users[user].BalanceLocked[asset],
+		service.GetAssetAmount(user, asset),
+		service.GetAssetAmountLocked(user, asset),
 	)
 }

@@ -110,14 +110,14 @@ func (service *OrderService) CreateOrder(order Order, marketTicker string) {
 	if order.OrderType == BuyOrder {
 		marketService.UpdateLiquidity(
 			marketTicker,
-			order.Size,
+			new(big.Int).Set(order.Size),
 			big.NewInt(0),
 		)
 	} else {
 		marketService.UpdateLiquidity(
 			marketTicker,
 			big.NewInt(0),
-			order.Size,
+			new(big.Int).Set(order.Size),
 		)
 	}
 }
