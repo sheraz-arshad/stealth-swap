@@ -3,20 +3,23 @@ package service
 import "errors"
 
 type ServiceRegistry struct {
-	MarketService *MarketService
-	UserService   *UserService
-	OrderService  *OrderService
+	MarketService     *MarketService
+	UserService       *UserService
+	OrderService      *OrderService
+	BlockchainService *BlockchainService
 }
 
 func NewServiceRegistry(
 	marketService *MarketService,
 	userService *UserService,
 	orderService *OrderService,
+	blockchainService *BlockchainService,
 ) *ServiceRegistry {
 	return &ServiceRegistry{
-		MarketService: marketService,
-		UserService:   userService,
-		OrderService:  orderService,
+		MarketService:     marketService,
+		UserService:       userService,
+		OrderService:      orderService,
+		BlockchainService: blockchainService,
 	}
 }
 
@@ -39,4 +42,11 @@ func (registry *ServiceRegistry) GetOrderService() (*OrderService, error) {
 		return nil, errors.New("order service not set")
 	}
 	return registry.OrderService, nil
+}
+
+func (registry *ServiceRegistry) GetBlockchainService() (*BlockchainService, error) {
+	if registry.BlockchainService == nil {
+		return nil, errors.New("blockchain service not set")
+	}
+	return registry.BlockchainService, nil
 }
